@@ -41,6 +41,20 @@ defmodule FastGlobal do
   def delete({__MODULE__, module}), do: do_delete(module)
   def delete(key), do: key |> key_to_module |> do_delete
 
+  @doc """
+  Compile `value` at `key` to object binary.
+  """
+  @spec compile(atom | {__MODULE__, module}, any) :: :ok
+  def compile({__MODULE__, module}, value), do: do_compile(module, value)
+  def compile(key, value), do: key |> key_to_module |> do_compile(value)
+
+  @doc """
+  Store compiled object binary at `key`.
+  """
+  @spec load(atom | {__MODULE__, module}, binary) :: :ok
+  def load({__MODULE__, module}, binary), do: do_load(module, binary)
+  def load(key, binary), do: key |> key_to_module |> do_load(binary)
+
   ## Private
 
   @spec do_get(atom, any) :: any
@@ -55,10 +69,8 @@ defmodule FastGlobal do
 
   @spec do_put(atom, any) :: :ok
   defp do_put(module, value) do
-    binary = compile(module, value)
-    :code.purge(module)
-    {:module, ^module} = :code.load_binary(module, '#{module}.erl', binary)
-    :ok
+    binary = do_compile(module, value)
+    do_load(module, binary)
   end
 
   @spec do_delete(atom) :: :ok
@@ -73,31 +85,35 @@ defmodule FastGlobal do
     :"Elixir.FastGlobal.#{key}"
   end
 
-  @spec compile(atom, any) :: binary
-  defp compile(module, value) do
-    {:ok, ^module, binary} = module
+  @spec do_load(atom, binary) :: :ok
+  defp do_load(module, binary) do
+    :code.purge(module)
+    {:module, ^module} = :code.load_binary(module, '#{module}.erl', binary)
+    :ok
+  end
+
+  @spec do_compile(atom, any) :: binary
+  defp do_compile(module, value) do
+    {:ok, ^module, binary} =
+      module
       |> value_to_abstract(value)
       |> Enum.map(&:erl_syntax.revert/1)
       |> :compile.forms([:verbose, :report_errors])
+
     binary
   end
 
-  @spec value_to_abstract(atom, any) :: [:erl_syntax.syntaxTree]
+  @spec value_to_abstract(atom, any) :: [:erl_syntax.syntaxTree()]
   defp value_to_abstract(module, value) do
     import :erl_syntax
+
     [
       # -module(module).
-      attribute(
-        atom(:module),
-        [atom(module)]),
+      attribute(atom(:module), [atom(module)]),
       # -export([value/0]).
-      attribute(
-        atom(:export),
-        [list([arity_qualifier(atom(:value), integer(0))])]),
+      attribute(atom(:export), [list([arity_qualifier(atom(:value), integer(0))])]),
       # value() -> value.
-      function(
-        atom(:value),
-        [clause([], :none, [abstract(value)])]),
+      function(atom(:value), [clause([], :none, [abstract(value)])])
     ]
   end
 end
